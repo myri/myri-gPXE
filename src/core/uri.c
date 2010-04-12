@@ -129,7 +129,10 @@ struct uri * parse_uri ( const char *uri_string ) {
 	}
 
 	/* Identify net/absolute/relative path */
-	if ( strncmp ( path, "//", 2 ) == 0 ) {
+	if ( strncmp ( path, "//", 2 ) != 0 ) {
+		/* Absolute/relative path */
+		uri->path = path;
+	} else {
 		/* Net path.  If this is terminated by the first '/'
 		 * of an absolute path, then we have no space for a
 		 * terminator after the authority field, so shuffle
@@ -145,31 +148,28 @@ struct uri * parse_uri ( const char *uri_string ) {
 			authority--;
 			*(--tmp) = '\0';
 		}
-	} else {
-		/* Absolute/relative path */
-		uri->path = path;
-	}
 
-	/* Split authority into user[:password] and host[:port] portions */
-	if ( ( tmp = strchr ( authority, '@' ) ) ) {
-		/* Has user[:password] */
-		*(tmp++) = '\0';
-		uri->host = tmp;
-		uri->user = authority;
-		if ( ( tmp = strchr ( authority, ':' ) ) ) {
-			/* Has password */
+		/* Split authority into user[:password] and host[:port] portions */
+		if ( ( tmp = strchr ( authority, '@' ) ) ) {
+			/* Has user[:password] */
 			*(tmp++) = '\0';
-			uri->password = tmp;
+			uri->host = tmp;
+			uri->user = authority;
+			if ( ( tmp = strchr ( authority, ':' ) ) ) {
+				/* Has password */
+				*(tmp++) = '\0';
+				uri->password = tmp;
+			}
+		} else {
+			/* No user:password */
+			uri->host = authority;
 		}
-	} else {
-		/* No user:password */
-		uri->host = authority;
-	}
 
-	/* Split host into host[:port] */
-	if ( ( tmp = strchr ( uri->host, ':' ) ) ) {
-		*(tmp++) = '\0';
-		uri->port = tmp;
+		/* Split host into host[:port] */
+		if ( ( tmp = strchr ( uri->host, ':' ) ) ) {
+			*(tmp++) = '\0';
+			uri->port = tmp;
+		}
 	}
 
 	/* Decode fields that should be decoded */
