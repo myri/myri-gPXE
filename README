@@ -29,7 +29,7 @@ toolchain is required.
 The following packages (at least) are required:
 
   - a gcc tool chain (gcc 3.x or gcc 4.x)
-  - binutils
+  - binutils (version 2.16 or later)
   - perl
   - syslinux
   - mtools

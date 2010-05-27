@@ -1410,6 +1410,11 @@ static struct sockaddr dhcp_peer = {
 };
 
 /**
+ * Get cached DHCPACK where none exists
+ */
+__weak void get_cached_dhcpack ( void ) {}
+
+/**
  * Start DHCP state machine on a network device
  *
  * @v job		Job control interface
