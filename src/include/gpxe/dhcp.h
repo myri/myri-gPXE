@@ -386,6 +386,15 @@ struct dhcp_netdev_desc {
  */
 #define DHCP_EB_REVERSE_PASSWORD DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0xc1 )
 
+/** Scriptlet
+ *
+ * A smal initialization script that can be stored in nonvolatile memory.
+ * Since the Etherboot UI does not support newlines in settings, the
+ * escape sequence '\n' is treated as a newline.  All other '\X'
+ * escape sequences pass through the the escaped character unchanged.
+ */
+#define DHCP_EB_SCRIPTLET DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0xc2 )
+
 /** gPXE version number */
 #define DHCP_EB_VERSION DHCP_ENCAP_OPT ( DHCP_EB_ENCAP, 0xeb )
 

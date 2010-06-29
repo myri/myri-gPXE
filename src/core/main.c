@@ -17,6 +17,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <stdio.h>
 #include <gpxe/init.h>
 #include <gpxe/features.h>
+#include <gpxe/scriptlet.h>
 #include <gpxe/shell.h>
 #include <gpxe/shell_banner.h>
 #include <gpxe/image.h>
@@ -67,10 +68,17 @@ __asmcall int main ( void ) {
 		/* User wants shell; just give them a shell */
 		shell();
 	} else {
-		/* User doesn't want shell; load and execute the first
-		 * image, or autoboot() if we have no images.  If
-		 * booting fails for any reason, offer a second chance
-		 * to enter the shell for diagnostics.
+		/* User doesn't want shell; execute any nonvolatile
+		 * scriptlet first, so the user can override compiled
+		 * in boot images by setting a scriptlet using the
+		 * preboot shell.
+		 */
+		scriptlet_exec ();
+
+		/* Load and execute the boot images, or autoboot() if
+		 * we have no image.  If booting fails for any reason,
+		 * offer a second chance to enter the shell for
+		 * diagnostics.
 		 */
 		if ( have_images() ) {
 			for_each_image ( image ) {
