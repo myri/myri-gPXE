@@ -27,14 +27,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <gpxe/smbios.h>
 
 /** SMBIOS settings tag magic number */
-#define SMBIOS_TAG_MAGIC 0x5B /* "SmBios" */
-
-/**
- * Construct SMBIOS empty tag
- *
- * @ret tag		SMBIOS setting tag
- */
-#define SMBIOS_EMPTY_TAG ( SMBIOS_TAG_MAGIC << 24 )
+#define SMBIOS_TAG_MAGIC 0x5B000000 /* "SmBios" */
 
 /**
  * Construct SMBIOS raw-data tag
@@ -45,7 +38,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * @ret tag		SMBIOS setting tag
  */
 #define SMBIOS_RAW_TAG( _type, _structure, _field )		\
-	( ( SMBIOS_TAG_MAGIC << 24 ) |				\
+	( SMBIOS_TAG_MAGIC |					\
 	  ( (_type) << 16 ) |					\
 	  ( offsetof ( _structure, _field ) << 8 ) |		\
 	  ( sizeof ( ( ( _structure * ) 0 )->_field ) ) )
@@ -59,7 +52,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * @ret tag		SMBIOS setting tag
  */
 #define SMBIOS_STRING_TAG( _type, _structure, _field )		\
-	( ( SMBIOS_TAG_MAGIC << 24 ) |				\
+	( SMBIOS_TAG_MAGIC |					\
 	  ( (_type) << 16 ) |					\
 	  ( offsetof ( _structure, _field ) << 8 ) )
 
@@ -76,18 +69,16 @@ static int smbios_fetch ( struct settings *settings __unused,
 			  struct setting *setting,
 			  void *data, size_t len ) {
 	struct smbios_structure structure;
-	unsigned int tag_magic;
 	unsigned int tag_type;
 	unsigned int tag_offset;
 	unsigned int tag_len;
 	int rc;
 
 	/* Split tag into type, offset and length */
-	tag_magic = ( setting->tag >> 24 );
 	tag_type = ( ( setting->tag >> 16 ) & 0xff );
 	tag_offset = ( ( setting->tag >> 8 ) & 0xff );
 	tag_len = ( setting->tag & 0xff );
-	if ( tag_magic != SMBIOS_TAG_MAGIC )
+	if ( TAG_TYPE ( setting->tag ) != TAG_TYPE (SMBIOS_TAG_MAGIC) )
 		return -ENOENT;
 
 	/* Find SMBIOS structure */
@@ -126,7 +117,7 @@ static struct settings_operations smbios_settings_operations = {
 static struct settings smbios_settings = {
 	.refcnt = NULL,
 	.name = "smbios",
-	.tag_magic = SMBIOS_EMPTY_TAG,
+	.tag_magic = SMBIOS_TAG_MAGIC,
 	.siblings = LIST_HEAD_INIT ( smbios_settings.siblings ),
 	.children = LIST_HEAD_INIT ( smbios_settings.children ),
 	.op = &smbios_settings_operations,

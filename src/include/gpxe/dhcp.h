@@ -612,6 +612,9 @@ struct dhcphdr {
 /** Setting block name used for BootServerDHCP responses */
 #define PXEBS_SETTINGS_NAME "pxebs"
 
+/** Settings block tag_magic used for blocks holding DHCP settings. */
+#define DHCP_TAG_MAGIC 0x00000000
+
 extern void * dhcp_chaddr ( struct net_device *netdev, uint8_t *hlen,
 			    uint16_t *flags );
 extern int dhcp_create_packet ( struct dhcp_packet *dhcppkt,

@@ -14,6 +14,18 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <gpxe/list.h>
 #include <gpxe/refcnt.h>
 
+/** Type of a setting or settings block
+ *
+ * The type is encoded in the tag field of each setting and the
+ * tag_magic field of each settings block.  Settings are applicable to
+ * the settings block if and only iff the tag type of the setting
+ * matches the tag type of the settings block.
+ */
+#define TAG_TYPE( tag ) ( ( ( tag ) >> 24 ) & 0xfd )
+
+/** Readonly status of a setting. */
+#define TAG_READONLY( tag ) ( ( ( tag ) >> 25 ) & 1 )
+
 struct settings;
 struct in_addr;
 union uuid;
@@ -33,7 +45,12 @@ struct setting {
 	 * address, etc.).
 	 */
 	struct setting_type *type;
-	/** DHCP option number, if applicable */
+	/** DHCP option number, if applicable
+	 *
+	 * This field may also hold non-DHCP setting identifiers, such
+	 * as for SMBIOS or Phantom CLP, and includes a 'readonly' bit.
+	 * See TAG_TYPE() and TAG_READONLY().
+	 */
 	unsigned int tag;
 };
 
@@ -87,6 +104,9 @@ struct settings {
 	 * constructed by parse_setting_name(), and can be used to
 	 * avoid e.g. attempting to retrieve the subnet mask from
 	 * SMBIOS, or the system UUID from DHCP.
+	 *
+	 * The TAG_TYPE() of this field identifies which setting
+	 * structures are relevant to this settings block.
 	 */
 	unsigned int tag_magic;
 	/** Parent settings block */

@@ -205,7 +205,7 @@ void nvo_init ( struct nvo_block *nvo, struct nvs_device *nvs,
 	nvo->nvs = nvs;
 	nvo->fragments = fragments;
 	settings_init ( &nvo->settings, &nvo_settings_operations, refcnt,
-			"nvo", 0 );
+			"nvo", DHCP_TAG_MAGIC );
 }
 
 /**
