@@ -22,6 +22,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <stdarg.h>
 #include <unistd.h>
 #include <string.h>
+#include <limits.h>
 #include <curses.h>
 #include <console.h>
 #include <gpxe/settings.h>
@@ -66,6 +67,8 @@ struct setting_row {
 struct setting_widget {
 	/** Settings block */
 	struct settings *settings;
+	/** Total rows that can be displayed */
+	unsigned int total_rows;
         /** Index of the first visible setting, for scrolling. */
 	unsigned int first_visible;
 	/** Configuration setting */
@@ -136,6 +139,63 @@ static int save_setting ( struct setting_widget *widget ) {
 }
 
 /**
+ * Determine if a setting is relevant to the scope of a settings block.
+ *
+ * @v settings		Settings block that determines the scope
+ * @v setting		Setting to test for relevance
+ * @v recuse		Whether to consider child settings blocks
+ * @ret relevant	Whether the setting is relevant to the settings block
+ */
+static int relevant ( struct settings *settings,
+		      struct setting *setting ) {
+	unsigned int relevant_type = TAG_TYPE ( settings->tag_magic );
+	struct settings *child;
+
+	if ( TAG_TYPE ( setting->tag ) == relevant_type )
+		return 1;
+	list_for_each_entry ( child, &settings->children, siblings ) {
+		if ( relevant ( child, setting ) )
+			return 1;
+	}
+	return 0;
+}
+
+/**
+ * Lookup the n'th setting in the current scope.  If there is no n'th
+ * setting in scope, return the number of settings in scope.
+ *
+ * @v settings		Settings structure that determines the scope
+ * @v n			Index of the relevant setting
+ * @ret setting		N'th relevant setting, else the relevant setting count
+ */
+static struct setting *relevant_setting ( struct settings *settings,
+					  unsigned int n ) {
+	struct setting *setting;
+	unsigned int cnt = 0;
+
+	for_each_table_entry ( setting, SETTINGS ) {
+		if ( relevant ( settings, setting ) ) {
+			if ( cnt++ == n )
+				return setting;
+		}
+	}
+
+	/* Return cnt to make relevant_setting_cnt() trivial. */
+	return ( void * ) ( long ) cnt;
+}
+
+/**
+ * Return the number of in-scope settings.
+ *
+ * @v settings		Settings structure determining the scope.
+ * @ret cnt		Number of relevant (in-scope) settings.
+ */
+
+static unsigned int relevant_setting_cnt ( struct settings *settings ) {
+	return (unsigned long) relevant_setting ( settings, UINT_MAX );
+}
+
+/**
  * Initialise the scrolling setting widget, drawing initial display.
  *
  * @v widget		Setting widget
@@ -145,6 +205,9 @@ static void init_widget ( struct setting_widget *widget,
 			  struct settings *settings ) {
 	memset ( widget, 0, sizeof ( *widget ) );
 	widget->settings = settings;
+	widget->total_rows = relevant_setting_cnt ( settings );
+
+	/* Draw all rows initially. */
 	widget->first_visible = SETTINGS_LIST_ROWS;
 	reveal ( widget, 0 );
 }
@@ -210,12 +273,11 @@ static int edit_setting ( struct setting_widget *widget, int key ) {
  */
 static void select_setting ( struct setting_widget *widget,
 			     unsigned int index ) {
-	struct setting *all_settings = table_start ( SETTINGS );
 	unsigned int skip = offsetof ( struct setting_widget, setting );
 
 	/* Reset the widget, preserving static state. */
 	memset ( ( char * ) widget + skip, 0, sizeof ( *widget ) - skip );
-	widget->setting = &all_settings[index];
+	widget->setting = relevant_setting ( widget->settings, index );
 	widget->row = SETTINGS_LIST_ROW + index - widget->first_visible;
 	widget->col = SETTINGS_LIST_COL;
 
@@ -359,13 +421,14 @@ static void reveal ( struct setting_widget *widget, unsigned int n)
 		   widget->first_visible > 0 ? "..." : "   " );
 	mvaddstr ( SETTINGS_LIST_ROW + SETTINGS_LIST_ROWS,
 		   SETTINGS_LIST_COL + 1,
-		   ( widget->first_visible + SETTINGS_LIST_ROWS < NUM_SETTINGS
+		   ( (widget->first_visible + SETTINGS_LIST_ROWS
+		      < widget->total_rows )
 		     ? "..."
 		     : "   " ) );
 	
 	/* Draw visible settings. */
 	for ( i = 0; i < SETTINGS_LIST_ROWS; i++ ) {
-		if ( widget->first_visible + i < NUM_SETTINGS ) {
+		if ( widget->first_visible + i < widget->total_rows ) {
 			select_setting ( widget, widget->first_visible + i );
 			draw_setting ( widget );
 		} else {
@@ -424,7 +487,7 @@ static int main_loop ( struct settings *settings ) {
 			next = current;
 			switch ( key ) {
 			case KEY_DOWN:
-				if ( next < ( NUM_SETTINGS - 1 ) )
+				if ( next < widget.total_rows - 1 )
 					reveal ( &widget, ++next );
 				break;
 			case KEY_UP:
