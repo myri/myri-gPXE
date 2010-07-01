@@ -49,6 +49,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define SETTINGS_LIST_ROWS	16
 #define INFO_ROW		20
 #define ALERT_ROW		20
+#define COMMENT_ROW		21
 #define INSTRUCTION_ROW		22
 #define INSTRUCTION_PAD "     "
 
@@ -222,6 +223,7 @@ static void draw_setting ( struct setting_widget *widget ) {
 	unsigned int len;
 	unsigned int curs_col;
 	char *value;
+	int bold;
 
 	/* Fill row with spaces */
 	memset ( &row, ' ', sizeof ( row ) );
@@ -245,8 +247,15 @@ static void draw_setting ( struct setting_widget *widget ) {
 	curs_col = ( widget->col + offsetof ( typeof ( row ), value )
 		     + len );
 
+	/* Print line in bold if settings is not from a child. */
+	bold = ( 0 <= fetch_setting_ex ( widget->settings, widget->setting,
+					 NULL, 0, 0 ) );
 	/* Print row */
+	if ( bold )
+		attron ( A_BOLD );
 	mvprintw ( widget->row, widget->col, "%s", row.start );
+	if ( bold )
+		attroff ( A_BOLD );
 	move ( widget->row, curs_col );
 	if ( widget->editing )
 		draw_editbox ( &widget->editbox );
@@ -393,6 +402,14 @@ static void draw_instruction_row ( int editing ) {
 	}
 }
 
+static void draw_comment_row ( struct settings *settings,
+			       struct setting *setting ) {
+	clearmsg ( COMMENT_ROW );
+	if ( fetch_setting ( settings, setting, NULL, 0 ) >= 0 &&
+	     fetch_setting_ex ( settings, setting, NULL, 0, 0 ) < 0 )
+		msg ( COMMENT_ROW, "[inherited from deeper scope]" );
+}
+
 /**
  * Reveal a setting by index: Scroll the setting list to reveal the
  * specified setting.
@@ -454,9 +471,10 @@ static int main_loop ( struct settings *settings ) {
 	init_widget ( &widget, settings );
 	
 	while ( 1 ) {
-		/* Redraw information and instruction rows */
+		/* Redraw information, instruction, and comment rows */
 		draw_info_row ( widget.setting );
 		draw_instruction_row ( widget.editing );
+		draw_comment_row ( widget.settings, widget.setting );
 
 		/* Redraw current setting */
 		color_set ( ( widget.editing ? CPAIR_EDIT : CPAIR_SELECT ),
