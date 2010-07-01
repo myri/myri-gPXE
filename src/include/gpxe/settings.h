@@ -205,6 +205,8 @@ extern int store_setting ( struct settings *settings, struct setting *setting,
 			   const void *data, size_t len );
 extern int fetch_setting ( struct settings *settings, struct setting *setting,
 			   void *data, size_t len );
+extern int fetch_setting_ex ( struct settings *settings, struct setting *setting,
+			      void *data, size_t len, int recurse );
 extern int fetch_setting_len ( struct settings *settings,
 			       struct setting *setting );
 extern int fetch_string_setting ( struct settings *settings,

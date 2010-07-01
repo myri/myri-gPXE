@@ -538,6 +538,24 @@ int store_setting ( struct settings *settings, struct setting *setting,
  */
 int fetch_setting ( struct settings *settings, struct setting *setting,
 		    void *data, size_t len ) {
+	return fetch_setting_ex ( settings, setting, data, len, 1);
+}
+
+/**
+ * Fetch value of setting
+ *
+ * @v settings		Settings block, or NULL to search all blocks
+ * @v setting		Setting to fetch
+ * @v data		Buffer to fill with setting data
+ * @v len		Length of buffer
+ * @v recurse		Enable setting in children, if necessary.
+ * @ret len		Length of setting data, or negative error
+ *
+ * The actual length of the setting will be returned even if
+ * the buffer was too small.
+ */
+int fetch_setting_ex ( struct settings *settings, struct setting *setting,
+		       void *data, size_t len, int recurse ) {
 	struct settings *child;
 	int ret;
 
@@ -556,6 +574,10 @@ int fetch_setting ( struct settings *settings, struct setting *setting,
 	if ( ( ret = settings->op->fetch ( settings, setting,
 					   data, len ) ) >= 0 )
 		return ret;
+
+	/* Return if recursion is disabled. */
+	if ( ! recurse )
+		return -ENOENT;
 
 	/* Recurse into each child block in turn */
 	list_for_each_entry ( child, &settings->children, siblings ) {
