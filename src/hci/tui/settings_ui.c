@@ -21,6 +21,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <stdio.h>
 #include <stdarg.h>
 #include <unistd.h>
+#include <stdlib.h>
 #include <string.h>
 #include <limits.h>
 #include <curses.h>
@@ -53,6 +54,18 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define INSTRUCTION_ROW		22
 #define INSTRUCTION_PAD "     "
 
+/** Row object, representing a parent, child, setting, or row count. */
+struct row_object
+{
+	enum row_type { PARENT_ROW, CHILD_ROW, SETTING_ROW, ROW_CNT } type;
+	union {
+		struct settings *parent;
+		struct settings *child;
+		struct setting *setting;
+		unsigned int cnt;
+	} u;
+};
+
 /** Layout of text within a setting widget */
 struct setting_row {
 	char start[0];
@@ -73,7 +86,7 @@ struct setting_widget {
         /** Index of the first visible setting, for scrolling. */
 	unsigned int first_visible;
 	/** Configuration setting */
-	struct setting *setting;
+	struct row_object ro;
 	/** Screen row */
 	unsigned int row;
 	/** Screen column */
@@ -102,8 +115,8 @@ static void vmsg ( unsigned int row, const char *fmt, va_list args ) __nonnull;
 static void msg ( unsigned int row, const char *fmt, ... ) __nonnull;
 static void valert ( const char *fmt, va_list args ) __nonnull;
 static void alert ( const char *fmt, ... ) __nonnull;
-static void draw_info_row ( struct setting *setting ) __nonnull;
-static int main_loop ( struct settings *settings ) __nonnull;
+static void draw_info_row ( struct row_object *ro ) __nonnull;
+static struct settings *main_loop ( struct settings *settings ) __nonnull;
 
 /**
  * Load setting widget value from configuration settings
@@ -116,11 +129,20 @@ static void load_setting ( struct setting_widget *widget ) {
 	/* Mark as not editing */
 	widget->editing = 0;
 
-	/* Read current setting value */
-	if ( fetchf_setting ( widget->settings, widget->setting,
-			      widget->value, sizeof ( widget->value ) ) < 0 ) {
-		widget->value[0] = '\0';
-	}	
+	/* Read current row value */
+	widget->value[0] = '\0';
+	if ( widget->ro.type == PARENT_ROW )
+		strncpy ( widget->value,
+			  ( widget->ro.u.parent->name[0]
+			    ? widget->ro.u.parent->name
+			    : "<root>" ),
+			  sizeof ( widget->value ) );
+	else if ( widget->ro.type == CHILD_ROW )
+		strncpy ( widget->value, widget->ro.u.child->name,
+			  sizeof ( widget->value ) );
+	else
+		fetchf_setting ( widget->settings, widget->ro.u.setting,
+				 widget->value, sizeof ( widget->value ) );
 
 	/* Initialise edit box */
 	init_editbox ( &widget->editbox, widget->value,
@@ -135,7 +157,7 @@ static void load_setting ( struct setting_widget *widget ) {
  * @v widget		Setting widget
  */
 static int save_setting ( struct setting_widget *widget ) {
-	return storef_setting ( widget->settings, widget->setting,
+	return storef_setting ( widget->settings, widget->ro.u.setting,
 				widget->value );
 }
 
@@ -162,38 +184,50 @@ static int relevant ( struct settings *settings,
 }
 
 /**
- * Lookup the n'th setting in the current scope.  If there is no n'th
- * setting in scope, return the number of settings in scope.
+ * Return the n'th row to display.
  *
- * @v settings		Settings structure that determines the scope
- * @v n			Index of the relevant setting
- * @ret setting		N'th relevant setting, else the relevant setting count
+ * @v settings		Settings block
+ * @v n			Row to return.
+ * @ret row			N'th row in the settings block.
+ *
+ * If there is no n'th row to display, then a ROW_CNT row object is returned,
+ * specifying the number of rows in to display.
  */
-static struct setting *relevant_setting ( struct settings *settings,
-					  unsigned int n ) {
+static struct row_object row ( struct settings *settings, unsigned int n ) {
+	struct row_object ro;
 	struct setting *setting;
+	struct settings *child;
 	unsigned int cnt = 0;
 
-	for_each_table_entry ( setting, SETTINGS ) {
-		if ( relevant ( settings, setting ) ) {
-			if ( cnt++ == n )
-				return setting;
+	/* First comes any parent. */
+	if ( settings->parent ) {
+		if ( cnt++ == n ) {
+			ro.type = PARENT_ROW;
+			ro.u.parent = settings->parent;
+			return ro;
 		}
 	}
-
-	/* Return cnt to make relevant_setting_cnt() trivial. */
-	return ( void * ) ( long ) cnt;
-}
-
-/**
- * Return the number of in-scope settings.
- *
- * @v settings		Settings structure determining the scope.
- * @ret cnt		Number of relevant (in-scope) settings.
- */
-
-static unsigned int relevant_setting_cnt ( struct settings *settings ) {
-	return (unsigned long) relevant_setting ( settings, UINT_MAX );
+	/* Next come any children. */
+	list_for_each_entry ( child, &settings->children, siblings ) {
+		if ( cnt++ == n ) {
+			ro.type = CHILD_ROW;
+			ro.u.child = child;
+			return ro;
+		}
+	}
+	/* Next display relevant settings. */
+	for_each_table_entry ( setting, SETTINGS ) {
+		if ( relevant ( settings, setting ) ) {
+			if ( cnt++ == n ) {
+				ro.type = SETTING_ROW;
+				ro.u.setting = setting;
+				return ro;
+			}
+		}
+	}
+	ro.type = ROW_CNT;
+	ro.u.cnt = cnt;
+	return ro;
 }
 
 /**
@@ -206,7 +240,7 @@ static void init_widget ( struct setting_widget *widget,
 			  struct settings *settings ) {
 	memset ( widget, 0, sizeof ( *widget ) );
 	widget->settings = settings;
-	widget->total_rows = relevant_setting_cnt ( settings );
+	widget->total_rows = row ( settings, UINT_MAX ) .u.cnt;
 
 	/* Draw all rows initially. */
 	widget->first_visible = SETTINGS_LIST_ROWS;
@@ -219,6 +253,7 @@ static void init_widget ( struct setting_widget *widget,
  * @v widget		Setting widget
  */
 static void draw_setting ( struct setting_widget *widget ) {
+	const char *name;
 	struct setting_row row;
 	unsigned int len;
 	unsigned int curs_col;
@@ -231,10 +266,17 @@ static void draw_setting ( struct setting_widget *widget ) {
 
 	/* Construct dot-padded name */
 	memset ( row.name, '.', sizeof ( row.name ) );
-	len = strlen ( widget->setting->name );
+	if ( widget->ro.type == SETTING_ROW ) {
+		name = widget->ro.u.setting->name;
+	} else if ( widget->ro.type == PARENT_ROW ) {
+		name = "parent";
+	} else {
+		name = "child";
+	}
+	len = strlen ( name );
 	if ( len > sizeof ( row.name ) )
 		len = sizeof ( row.name );
-	memcpy ( row.name, widget->setting->name, len );
+	memcpy ( row.name, name, len );
 
 	/* Construct space-padded value */
 	value = widget->value;
@@ -248,8 +290,12 @@ static void draw_setting ( struct setting_widget *widget ) {
 		     + len );
 
 	/* Print line in bold if settings is not from a child. */
-	bold = ( 0 <= fetch_setting_ex ( widget->settings, widget->setting,
-					 NULL, 0, 0 ) );
+	if ( widget->ro.type == SETTING_ROW )
+		bold = fetch_setting_ex ( widget->settings, widget->ro.u.setting,
+					  NULL, 0, 0 ) >= 0;
+	else
+		bold = 1;
+
 	/* Print row */
 	if ( bold )
 		attron ( A_BOLD );
@@ -282,11 +328,11 @@ static int edit_setting ( struct setting_widget *widget, int key ) {
  */
 static void select_setting ( struct setting_widget *widget,
 			     unsigned int index ) {
-	unsigned int skip = offsetof ( struct setting_widget, setting );
+	unsigned int skip = offsetof ( struct setting_widget, ro );
 
 	/* Reset the widget, preserving static state. */
 	memset ( ( char * ) widget + skip, 0, sizeof ( *widget ) - skip );
-	widget->setting = relevant_setting ( widget->settings, index );
+	widget->ro = row ( widget->settings, index );
 	widget->row = SETTINGS_LIST_ROW + index - widget->first_visible;
 	widget->col = SETTINGS_LIST_COL;
 
@@ -366,9 +412,12 @@ static void alert ( const char *fmt, ... ) {
 /**
  * Draw title row
  */
-static void draw_title_row ( void ) {
+static void draw_title_row ( struct settings *settings ) {
+	const char *name = settings_name ( settings );
+	clearmsg ( TITLE_ROW );
 	attron ( A_BOLD );
-	msg ( TITLE_ROW, "gPXE option configuration console" );
+	msg ( TITLE_ROW, "gPXE %s%soption configuration console",
+	      name, name[0] ? " " : name );
 	attroff ( A_BOLD );
 }
 
@@ -377,10 +426,16 @@ static void draw_title_row ( void ) {
  *
  * @v setting		Current configuration setting
  */
-static void draw_info_row ( struct setting *setting ) {
+static void draw_info_row ( struct row_object *ro ) {
 	clearmsg ( INFO_ROW );
 	attron ( A_BOLD );
-	msg ( INFO_ROW, "%s - %s", setting->name, setting->description );
+	if ( ro->type == PARENT_ROW )
+		msg ( INFO_ROW, "Enter - visit parent" );
+	else if ( ro->type == CHILD_ROW )
+		msg ( INFO_ROW, "Enter - visit child" );
+	else
+		msg ( INFO_ROW, "%s - %s", ro->u.setting->name,
+		      ro->u.setting->description );
 	attroff ( A_BOLD );
 }
 
@@ -402,12 +457,16 @@ static void draw_instruction_row ( int editing ) {
 	}
 }
 
-static void draw_comment_row ( struct settings *settings,
-			       struct setting *setting ) {
+static void draw_comment_row ( struct setting_widget *widget ) {
+	struct settings *settings = widget->settings;
+
 	clearmsg ( COMMENT_ROW );
-	if ( fetch_setting ( settings, setting, NULL, 0 ) >= 0 &&
-	     fetch_setting_ex ( settings, setting, NULL, 0, 0 ) < 0 )
-		msg ( COMMENT_ROW, "[inherited from deeper scope]" );
+	if ( widget->ro.type == SETTING_ROW ) {
+		struct setting *setting = widget->ro.u.setting;
+		if ( fetch_setting ( settings, setting, NULL, 0 ) >= 0 &&
+		     fetch_setting_ex ( settings, setting, NULL, 0, 0 ) < 0 )
+			msg ( COMMENT_ROW, "[inherited from child scope]" );
+	}
 }
 
 /**
@@ -458,7 +517,13 @@ static void reveal ( struct setting_widget *widget, unsigned int n)
 	select_setting ( widget, n );
 }
 
-static int main_loop ( struct settings *settings ) {
+/**
+ * Main user event processing loop.
+ *
+ * @v settings		Settings block to display.
+ * @ret next		Next settings block to display.
+ */
+static struct settings *main_loop ( struct settings *settings ) {
 	struct setting_widget widget;
 	unsigned int current = 0;
 	unsigned int next;
@@ -466,15 +531,15 @@ static int main_loop ( struct settings *settings ) {
 	int rc;
 
 	/* Print initial screen content */
-	draw_title_row();
+	draw_title_row ( settings );
 	color_set ( CPAIR_NORMAL, NULL );
 	init_widget ( &widget, settings );
 	
 	while ( 1 ) {
 		/* Redraw information, instruction, and comment rows */
-		draw_info_row ( widget.setting );
+		draw_info_row ( &widget.ro );
 		draw_instruction_row ( widget.editing );
-		draw_comment_row ( widget.settings, widget.setting );
+		draw_comment_row ( &widget );
 
 		/* Redraw current setting */
 		color_set ( ( widget.editing ? CPAIR_EDIT : CPAIR_SELECT ),
@@ -490,7 +555,7 @@ static int main_loop ( struct settings *settings ) {
 			case LF:
 				if ( ( rc = save_setting ( &widget ) ) != 0 ) {
 					alert ( " Could not set %s: %s ",
-						widget.setting->name,
+						widget.ro.u.setting->name,
 						strerror ( rc ) );
 				}
 				/* Fall through */
@@ -513,15 +578,29 @@ static int main_loop ( struct settings *settings ) {
 					reveal ( &widget, --next ) ;
 				break;
 			case CTRL_D:
-				delete_setting ( widget.settings,
-						 widget.setting );
-				select_setting ( &widget, next );
-				draw_setting ( &widget );
+				if ( widget.ro.type == SETTING_ROW ) {
+					delete_setting ( widget.settings,
+							 widget.ro.u.setting );
+					select_setting ( &widget, next );
+					draw_setting ( &widget );
+				} else {
+					alert ( " read only " );
+				}
 				break;
 			case CTRL_X:
 				return 0;
+			case CR:
+			case LF:
+				if ( widget.ro.type != SETTING_ROW )
+					return widget.ro.u.child;
+				/* Fall through in all other cases. */
 			default:
-				edit_setting ( &widget, key );
+				if ( widget.ro.type == SETTING_ROW
+				     && ! TAG_READONLY ( widget.ro.u.setting
+							 ->tag ) )
+					edit_setting ( &widget, key );
+				else
+					alert ( " read only " );
 				break;
 			}	
 			if ( next != current ) {
@@ -535,8 +614,6 @@ static int main_loop ( struct settings *settings ) {
 }
 
 int settings_ui ( struct settings *settings ) {
-	int rc;
-
 	initscr();
 	start_color();
 	init_pair ( CPAIR_NORMAL, COLOR_WHITE, COLOR_BLUE );
@@ -545,10 +622,12 @@ int settings_ui ( struct settings *settings ) {
 	init_pair ( CPAIR_ALERT, COLOR_WHITE, COLOR_RED );
 	color_set ( CPAIR_NORMAL, NULL );
 	erase();
-	
-	rc = main_loop ( settings );
+
+	do {
+		settings = main_loop ( settings );
+	} while ( settings );
 
 	endwin();
 
-	return rc;
+	return 0;
 }
